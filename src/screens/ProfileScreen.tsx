@@ -1,15 +1,36 @@
-import React from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Avatar from '../components/Avatar';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocationSharing } from '../contexts/LocationContext';
-import { signOut } from '../services/auth';
+import { signOut, updatePhoneNumber } from '../services/auth';
 
 export default function ProfileScreen() {
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const { sharing, startSharing, stopSharing } = useLocationSharing();
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [saving, setSaving] = useState(false);
 
   if (!profile) return null;
+
+  function beginEdit() {
+    setPhoneDraft(profile!.phoneNumber);
+    setEditingPhone(true);
+  }
+
+  async function savePhone() {
+    if (!user) return;
+    setSaving(true);
+    try {
+      await updatePhoneNumber(user.uid, phoneDraft);
+      setEditingPhone(false);
+    } catch (err) {
+      Alert.alert('Could not save', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <View style={styles.container}>
@@ -21,7 +42,29 @@ export default function ProfileScreen() {
 
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Phone number</Text>
-        <Text style={styles.rowValue}>{profile.phoneNumber || 'Not set'}</Text>
+        {editingPhone ? (
+          <View style={styles.editRow}>
+            <TextInput
+              style={styles.phoneInput}
+              value={phoneDraft}
+              onChangeText={setPhoneDraft}
+              keyboardType="phone-pad"
+              autoFocus
+              placeholder="Phone number"
+            />
+            <Pressable onPress={savePhone} disabled={saving}>
+              {saving ? (
+                <ActivityIndicator size="small" color="#1F8A70" />
+              ) : (
+                <Text style={styles.link}>Save</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable onPress={beginEdit}>
+            <Text style={[styles.rowValue, styles.link]}>{profile.phoneNumber || 'Add a number'}</Text>
+          </Pressable>
+        )}
       </View>
 
       <View style={styles.row}>
@@ -62,6 +105,16 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 15, color: '#333' },
   rowValue: { fontSize: 15, color: '#555' },
   link: { color: '#1F8A70', fontWeight: '600' },
+  editRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  phoneInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    fontSize: 15,
+    minWidth: 150,
+  },
   signOutButton: {
     marginTop: 40,
     padding: 14,

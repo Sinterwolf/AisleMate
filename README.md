@@ -15,7 +15,11 @@ the Google Places API for turning GPS coordinates into a store name.
 - Friends' current location is matched against nearby stores (Google Places
   Nearby Search) so you see "At Trader Joe's" instead of raw coordinates
 - Map view with pins for every friend currently sharing their location
-- Friends list view with a one-tap call button that opens the phone dialer
+- Friends list view with one-tap call and text buttons — the text button
+  pre-fills a "can you grab something for me?" message that mentions their
+  current store
+- Long-press a friend to remove them; edit your phone number from the
+  Profile tab
 
 ## Project structure
 
@@ -106,5 +110,5 @@ connect to it the same way Expo Go normally does.
   additional OS-level permission prompts).
 - Friend search is by exact email match; there's no username system or
   contact-list import yet.
-- Calling uses the native `tel:` link, so it opens the device's own dialer —
-  there's no in-app VoIP calling.
+- Calling and texting use the native `tel:`/`sms:` links, so they open the
+  device's own dialer/messaging app — there's no in-app VoIP or chat.

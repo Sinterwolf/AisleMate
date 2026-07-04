@@ -50,6 +50,9 @@ export default function FriendsListScreen({ navigation }: Props) {
         data={friends}
         keyExtractor={(item) => item.friendshipId}
         renderItem={({ item }) => <FriendListItem friend={item} />}
+        ListHeaderComponent={
+          friends.length > 0 ? <Text style={styles.hint}>Long-press a friend to remove them</Text> : null
+        }
         ListEmptyComponent={
           <Text style={styles.empty}>
             No friends yet. Tap the + icon to add one by email.
@@ -88,4 +91,5 @@ const styles = StyleSheet.create({
   requestButtonText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   declineText: { color: '#888' },
   empty: { textAlign: 'center', color: '#999', marginTop: 40, paddingHorizontal: 32 },
+  hint: { textAlign: 'center', color: '#aaa', fontSize: 12, paddingVertical: 8 },
 });
