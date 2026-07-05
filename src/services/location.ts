@@ -1,6 +1,5 @@
 import * as Location from 'expo-location';
-import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { supabase } from '../supabase/config';
 import { resolveStoreAtLocation } from './places';
 import type { StoreInfo } from '../types';
 
@@ -24,18 +23,20 @@ async function fallbackAddress(lat: number, lng: number): Promise<StoreInfo | nu
 export async function publishMyLocation(uid: string, lat: number, lng: number) {
   const store = (await resolveStoreAtLocation(lat, lng)) ?? (await fallbackAddress(lat, lng));
 
-  await setDoc(doc(db, 'locations', uid), {
-    uid,
+  const { error } = await supabase.from('locations').upsert({
+    user_id: uid,
     lat,
     lng,
     store,
     sharing: true,
-    updatedAt: serverTimestamp(),
+    updated_at: new Date().toISOString(),
   });
+  if (error) throw error;
 }
 
 export async function stopSharingLocation(uid: string) {
-  await deleteDoc(doc(db, 'locations', uid));
+  const { error } = await supabase.from('locations').delete().eq('user_id', uid);
+  if (error) throw error;
 }
 
 /** Starts watching the device's position, publishing an update on every significant move. */

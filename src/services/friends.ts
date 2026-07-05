@@ -1,60 +1,107 @@
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  where,
-} from 'firebase/firestore';
-import { db } from '../firebase/config';
-import type { FriendWithProfile, Friendship, IncomingRequest, UserProfile } from '../types';
+import { supabase } from '../supabase/config';
+import type { FriendLocation, FriendWithProfile, IncomingRequest, StoreInfo, UserProfile } from '../types';
 
-function pairId(a: string, b: string): string {
-  return a < b ? `${a}_${b}` : `${b}_${a}`;
+interface ProfileRow {
+  id: string;
+  display_name: string;
+  email: string;
+  phone_number: string;
+  created_at: string;
+}
+
+interface LocationRow {
+  user_id: string;
+  lat: number;
+  lng: number;
+  store: StoreInfo | null;
+  sharing: boolean;
+  updated_at: string;
+}
+
+interface FriendshipRow {
+  user_a: string;
+  user_b: string;
+  requested_by: string;
+  status: 'pending' | 'accepted' | 'declined';
+  created_at: string;
+  updated_at: string;
+}
+
+function pairKey(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a];
+}
+
+function friendshipId(row: Pick<FriendshipRow, 'user_a' | 'user_b'>): string {
+  return `${row.user_a}_${row.user_b}`;
+}
+
+function toProfile(row: ProfileRow): UserProfile {
+  return {
+    uid: row.id,
+    displayName: row.display_name,
+    email: row.email,
+    phoneNumber: row.phone_number,
+    createdAt: new Date(row.created_at).getTime(),
+  };
+}
+
+function toLocation(row: LocationRow): FriendLocation {
+  return {
+    uid: row.user_id,
+    lat: row.lat,
+    lng: row.lng,
+    store: row.store,
+    sharing: row.sharing,
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
 }
 
 export async function findUserByEmail(email: string): Promise<UserProfile | null> {
-  const q = query(collection(db, 'users'), where('email', '==', email.trim()));
-  const snap = await getDocs(q);
-  if (snap.empty) return null;
-  return snap.docs[0].data() as UserProfile;
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('email', email.trim())
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toProfile(data as ProfileRow) : null;
 }
 
 export async function sendFriendRequest(myUid: string, otherUid: string) {
   if (myUid === otherUid) throw new Error("You can't friend yourself.");
-  const id = pairId(myUid, otherUid);
-  const ref = doc(db, 'friendships', id);
-  const existing = await getDoc(ref);
-  if (existing.exists()) {
-    throw new Error('A friend request already exists with this person.');
-  }
-  await setDoc(ref, {
-    users: [myUid, otherUid].sort(),
-    requestedBy: myUid,
+  const [userA, userB] = pairKey(myUid, otherUid);
+
+  const { data: existing, error: existingError } = await supabase
+    .from('friendships')
+    .select('user_a')
+    .eq('user_a', userA)
+    .eq('user_b', userB)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) throw new Error('A friend request already exists with this person.');
+
+  const { error } = await supabase.from('friendships').insert({
+    user_a: userA,
+    user_b: userB,
+    requested_by: myUid,
     status: 'pending',
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
   });
+  if (error) throw error;
 }
 
-export async function respondToFriendRequest(
-  friendshipId: string,
-  accept: boolean
-) {
-  const ref = doc(db, 'friendships', friendshipId);
-  await updateDoc(ref, {
-    status: accept ? 'accepted' : 'declined',
-    updatedAt: serverTimestamp(),
-  });
+export async function respondToFriendRequest(friendshipId: string, accept: boolean) {
+  const [userA, userB] = friendshipId.split('_');
+  const { error } = await supabase
+    .from('friendships')
+    .update({ status: accept ? 'accepted' : 'declined', updated_at: new Date().toISOString() })
+    .eq('user_a', userA)
+    .eq('user_b', userB);
+  if (error) throw error;
 }
 
 export async function unfriend(friendshipId: string) {
-  await deleteDoc(doc(db, 'friendships', friendshipId));
+  const [userA, userB] = friendshipId.split('_');
+  const { error } = await supabase.from('friendships').delete().eq('user_a', userA).eq('user_b', userB);
+  if (error) throw error;
 }
 
 /** Subscribes to accepted friendships for a user, resolving each friend's profile + last known location. */
@@ -62,81 +109,62 @@ export function subscribeToFriends(
   myUid: string,
   onChange: (friends: FriendWithProfile[]) => void
 ): () => void {
-  const q = query(
-    collection(db, 'friendships'),
-    where('users', 'array-contains', myUid),
-    where('status', '==', 'accepted')
-  );
+  let cancelled = false;
 
-  const profileUnsubs = new Map<string, () => void>();
-  const locationUnsubs = new Map<string, () => void>();
-  const profiles = new Map<string, UserProfile>();
-  const locations = new Map<string, FriendWithProfile['location']>();
-  const friendshipByUid = new Map<string, string>();
+  async function refresh() {
+    const { data: friendships, error } = await supabase
+      .from('friendships')
+      .select('*')
+      .eq('status', 'accepted')
+      .or(`user_a.eq.${myUid},user_b.eq.${myUid}`);
+    if (error || cancelled) return;
 
-  function emit() {
-    const result: FriendWithProfile[] = [];
-    for (const [friendUid, friendshipId] of friendshipByUid.entries()) {
-      const profile = profiles.get(friendUid);
-      if (!profile) continue;
-      result.push({
-        friendshipId,
-        profile,
-        location: locations.get(friendUid) ?? null,
-      });
+    const rows = (friendships ?? []) as FriendshipRow[];
+    const friendUids = rows.map((row) => (row.user_a === myUid ? row.user_b : row.user_a));
+    if (friendUids.length === 0) {
+      onChange([]);
+      return;
     }
+
+    const [{ data: profiles }, { data: locations }] = await Promise.all([
+      supabase.from('profiles').select('*').in('id', friendUids),
+      supabase.from('locations').select('*').in('user_id', friendUids),
+    ]);
+    if (cancelled) return;
+
+    const profileByUid = new Map((profiles as ProfileRow[] | null ?? []).map((p) => [p.id, toProfile(p)]));
+    const locationByUid = new Map(
+      (locations as LocationRow[] | null ?? []).map((l) => [l.user_id, toLocation(l)])
+    );
+
+    const result: FriendWithProfile[] = rows
+      .map((row) => {
+        const friendUid = row.user_a === myUid ? row.user_b : row.user_a;
+        const profile = profileByUid.get(friendUid);
+        if (!profile) return null;
+        return {
+          friendshipId: friendshipId(row),
+          profile,
+          location: locationByUid.get(friendUid) ?? null,
+        };
+      })
+      .filter((f): f is FriendWithProfile => f !== null);
+
     onChange(result);
   }
 
-  const unsubFriendships = onSnapshot(q, (snap) => {
-    const activeFriendUids = new Set<string>();
+  refresh();
 
-    snap.forEach((d) => {
-      const data = d.data() as Friendship;
-      const friendUid = data.users.find((u) => u !== myUid);
-      if (!friendUid) return;
-      activeFriendUids.add(friendUid);
-      friendshipByUid.set(friendUid, d.id);
-
-      if (!profileUnsubs.has(friendUid)) {
-        const unsub = onSnapshot(doc(db, 'users', friendUid), (userSnap) => {
-          if (userSnap.exists()) {
-            profiles.set(friendUid, userSnap.data() as UserProfile);
-            emit();
-          }
-        });
-        profileUnsubs.set(friendUid, unsub);
-      }
-
-      if (!locationUnsubs.has(friendUid)) {
-        const unsub = onSnapshot(doc(db, 'locations', friendUid), (locSnap) => {
-          locations.set(friendUid, locSnap.exists() ? (locSnap.data() as FriendWithProfile['location']) : null);
-          emit();
-        });
-        locationUnsubs.set(friendUid, unsub);
-      }
-    });
-
-    // Clean up friends who are no longer in the accepted list (unfriended).
-    for (const uid of Array.from(friendshipByUid.keys())) {
-      if (!activeFriendUids.has(uid)) {
-        friendshipByUid.delete(uid);
-        profiles.delete(uid);
-        locations.delete(uid);
-        profileUnsubs.get(uid)?.();
-        profileUnsubs.delete(uid);
-        locationUnsubs.get(uid)?.();
-        locationUnsubs.delete(uid);
-      }
-    }
-
-    emit();
-  });
+  const channel = supabase
+    .channel(`friends-of-${myUid}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, refresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, refresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, refresh)
+    .subscribe();
 
   return () => {
-    unsubFriendships();
-    profileUnsubs.forEach((unsub) => unsub());
-    locationUnsubs.forEach((unsub) => unsub());
+    cancelled = true;
+    supabase.removeChannel(channel);
   };
 }
 
@@ -145,27 +173,52 @@ export function subscribeToIncomingRequests(
   myUid: string,
   onChange: (requests: IncomingRequest[]) => void
 ): () => void {
-  const q = query(
-    collection(db, 'friendships'),
-    where('users', 'array-contains', myUid),
-    where('status', '==', 'pending')
-  );
+  let cancelled = false;
 
-  return onSnapshot(q, async (snap) => {
-    const requests: IncomingRequest[] = [];
-    for (const d of snap.docs) {
-      const data = d.data() as Friendship;
-      if (data.requestedBy === myUid) continue; // outgoing, not incoming
-      const fromUid = data.users.find((u) => u !== myUid);
-      if (!fromUid) continue;
-      const fromSnap = await getDoc(doc(db, 'users', fromUid));
-      if (!fromSnap.exists()) continue;
-      requests.push({
-        friendshipId: d.id,
-        fromProfile: fromSnap.data() as UserProfile,
-        createdAt: (data.createdAt as unknown as { toMillis?: () => number })?.toMillis?.() ?? Date.now(),
-      });
+  async function refresh() {
+    const { data: friendships, error } = await supabase
+      .from('friendships')
+      .select('*')
+      .eq('status', 'pending')
+      .or(`user_a.eq.${myUid},user_b.eq.${myUid}`);
+    if (error || cancelled) return;
+
+    const rows = (friendships as FriendshipRow[] | null ?? []).filter((row) => row.requested_by !== myUid);
+    if (rows.length === 0) {
+      onChange([]);
+      return;
     }
+
+    const fromUids = rows.map((row) => row.requested_by);
+    const { data: profiles } = await supabase.from('profiles').select('*').in('id', fromUids);
+    if (cancelled) return;
+
+    const profileByUid = new Map((profiles as ProfileRow[] | null ?? []).map((p) => [p.id, toProfile(p)]));
+
+    const requests: IncomingRequest[] = rows
+      .map((row) => {
+        const fromProfile = profileByUid.get(row.requested_by);
+        if (!fromProfile) return null;
+        return {
+          friendshipId: friendshipId(row),
+          fromProfile,
+          createdAt: new Date(row.created_at).getTime(),
+        };
+      })
+      .filter((r): r is IncomingRequest => r !== null);
+
     onChange(requests);
-  });
+  }
+
+  refresh();
+
+  const channel = supabase
+    .channel(`incoming-requests-for-${myUid}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, refresh)
+    .subscribe();
+
+  return () => {
+    cancelled = true;
+    supabase.removeChannel(channel);
+  };
 }

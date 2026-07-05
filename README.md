@@ -4,8 +4,9 @@ A mobile app for seeing which store or grocery shop your friends are at right
 now, so you can call them and ask them to grab something while they're
 already there.
 
-Built with Expo (React Native + TypeScript), Firebase (Auth + Firestore), and
-the Google Places API for turning GPS coordinates into a store name.
+Built with Expo (React Native + TypeScript), Supabase (Auth + Postgres +
+Realtime), and the Google Places API for turning GPS coordinates into a
+store name.
 
 ## Features
 
@@ -28,19 +29,18 @@ App.tsx                   # Entry point: providers + navigation
 app.config.ts             # Expo config (permissions, Maps API key, plugins)
 src/
   config/env.ts            # Reads EXPO_PUBLIC_* env vars
-  firebase/config.ts        # Firebase app/auth/firestore init
+  supabase/config.ts        # Supabase client init (auth + Postgres + realtime)
   services/
     auth.ts                 # Sign up / sign in / sign out
     friends.ts               # Friend requests, friends list, unfriend
     location.ts              # Location permission + watch + publish
     places.ts                 # GPS -> nearest store name (Google Places)
-    calls.ts                   # tel: dialer integration
+    calls.ts                   # tel:/sms: integration
   contexts/                 # AuthContext, FriendsContext, LocationContext
   navigation/                # Auth stack, bottom tabs, friends stack
   screens/                    # Login, SignUp, Map, Friends, AddFriend, Profile
   components/                  # Avatar, FriendListItem
-firestore.rules             # Security rules: locations only visible to accepted friends
-firestore.indexes.json      # Composite index for the friendships query
+supabase/schema.sql          # Tables + RLS policies: locations only visible to accepted friends
 ```
 
 ## Setup
@@ -51,27 +51,26 @@ firestore.indexes.json      # Composite index for the friendships query
 npm install
 ```
 
-### 2. Create a Firebase project
+### 2. Create a Supabase project
 
-1. Go to the [Firebase console](https://console.firebase.google.com/) and create a project.
-2. Add a Web app (yes, even though this is a mobile app — the Firebase JS SDK
-   uses the Web app config) and copy the config values.
-3. Enable **Authentication > Sign-in method > Email/Password**.
-4. Enable **Firestore Database** (start in production mode; the rules in this
-   repo lock it down correctly).
-5. Deploy the rules and indexes in this repo with the [Firebase CLI](https://firebase.google.com/docs/cli):
-   ```bash
-   npm install -g firebase-tools
-   firebase login
-   firebase use --add        # select your project
-   firebase deploy --only firestore
-   ```
+1. Go to [supabase.com](https://supabase.com/), sign up (free, no credit card
+   required for the free tier), and create a new project.
+2. In the SQL editor, paste and run the contents of `supabase/schema.sql` from
+   this repo. It creates the `profiles`, `friendships`, and `locations`
+   tables, the row-level security policies that keep a location visible only
+   to its owner and accepted friends, and turns on Realtime for all three
+   tables.
+3. Under **Authentication > Providers > Email**, turn **off** "Confirm email"
+   (unless you want to wire up email confirmation links) so sign-up logs
+   people in immediately.
+4. Under **Project Settings > API**, copy the **Project URL** and the
+   **anon public** key.
 
 ### 3. Get a Google Places/Maps API key
 
-1. In the [Google Cloud Console](https://console.cloud.google.com/) (same or
-   a different project — needs billing enabled, there's a free monthly credit),
-   enable: **Places API**, **Maps SDK for Android**, **Maps SDK for iOS**.
+1. In the [Google Cloud Console](https://console.cloud.google.com/) (needs
+   billing enabled, there's a free monthly credit), enable: **Places API**,
+   **Maps SDK for Android**, **Maps SDK for iOS**.
 2. Create an API key and restrict it to those APIs.
 
 ### 4. Configure environment variables
@@ -80,7 +79,7 @@ npm install
 cp .env.example .env
 ```
 
-Fill in the Firebase values from step 2 and the API key from step 3 in `.env`.
+Fill in the Supabase URL/anon key from step 2 and the API key from step 3 in `.env`.
 
 ### 5. Run the app
 

@@ -1,11 +1,4 @@
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  updateProfile,
-} from 'firebase/auth';
-import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase/config';
+import { supabase } from '../supabase/config';
 
 export async function signUp(
   displayName: string,
@@ -13,29 +6,38 @@ export async function signUp(
   phoneNumber: string,
   password: string
 ) {
-  const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-  await updateProfile(credential.user, { displayName });
-
-  await setDoc(doc(db, 'users', credential.user.uid), {
-    uid: credential.user.uid,
-    displayName,
+  const { data, error } = await supabase.auth.signUp({
     email: email.trim(),
-    phoneNumber: phoneNumber.trim(),
-    createdAt: serverTimestamp(),
+    password,
+    options: {
+      data: {
+        display_name: displayName,
+        phone_number: phoneNumber.trim(),
+      },
+    },
   });
-
-  return credential.user;
+  if (error) throw error;
+  return data.user;
 }
 
 export async function signIn(email: string, password: string) {
-  const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-  return credential.user;
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+  if (error) throw error;
+  return data.user;
 }
 
 export async function signOut() {
-  await firebaseSignOut(auth);
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
 }
 
 export async function updatePhoneNumber(uid: string, phoneNumber: string) {
-  await updateDoc(doc(db, 'users', uid), { phoneNumber: phoneNumber.trim() });
+  const { error } = await supabase
+    .from('profiles')
+    .update({ phone_number: phoneNumber.trim() })
+    .eq('id', uid);
+  if (error) throw error;
 }
