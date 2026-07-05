@@ -85,19 +85,33 @@ Fill in the Firebase values from step 2 and the API key from step 3 in `.env`.
 ### 5. Run the app
 
 react-native-maps is a native module, so it isn't included in the plain Expo
-Go app — you need a development build:
+Go app. There are two ways to get a real build:
+
+**No local Xcode/Android Studio/Linux toolchain (recommended if you're on a
+Chromebook or similar):** use [EAS Build](https://expo.dev/eas), Expo's cloud
+build service — it compiles the app on Expo's servers and hands you back a
+download link.
+
+```bash
+npm install -g eas-cli
+eas login                       # or set EXPO_TOKEN for non-interactive auth
+eas build:configure             # links this repo to an Expo project
+eas build --platform android --profile preview
+```
+
+`profile preview` (see `eas.json`) produces a standalone installable `.apk`
+with your JS bundle baked in — no Metro server needs to keep running, and
+nothing else needs to be installed locally. When the build finishes you get a
+QR code / download link: open it on the target device (a phone, or the
+Chromebook itself if it has Android app / Play Store support enabled) and
+install it directly.
+
+**With a local dev machine (Mac for iOS, Mac/Linux/Windows for Android):**
 
 ```bash
 npx expo install expo-dev-client
 npx expo prebuild
 npx expo run:ios       # or: npx expo run:android
-```
-
-Alternatively, use [EAS Build](https://docs.expo.dev/develop/development-builds/introduction/)
-to build a dev client without a local Xcode/Android Studio setup:
-
-```bash
-npx eas build --profile development --platform ios
 ```
 
 Once a dev build is installed on your device/simulator, `npx expo start` will
